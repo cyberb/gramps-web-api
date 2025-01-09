@@ -33,6 +33,7 @@ from ..const import DB_CONFIG_ALLOWED_KEYS
 from .const import PERMISSIONS, PERM_USE_CHAT, ROLE_ADMIN, ROLE_OWNER
 from .passwords import hash_password, verify_password
 from .sql_guid import GUID
+import ldap
 
 user_db = SQLAlchemy()
 
@@ -173,6 +174,33 @@ def modify_user(
 
 
 def authorized(username: str, password: str) -> bool:
+    is_authorized = authorized_ldap(username, password)
+    if is_authorized:
+        try:
+            if not get_user_details(username):
+                add_user(name=username, password=uuid.uuid4().hex, role=ROLE_ADMIN)
+        except ValueError as e:
+            print(f"Error adding user: {e}")
+            return False
+    return is_authorized
+
+def authorized_ldap(username: str, password: str) -> bool:
+    conn = ldap.initialize('ldap://localhost:389')
+    try:
+        conn.simple_bind_s('cn={0},ou=users,dc=syncloud,dc=org'.format(username), password)
+        print('{0} authenticated'.format(username))
+    except ldap.INVALID_CREDENTIALS:
+        print('{0} not authenticated'.format(username))
+        conn.unbind()
+        return False
+    except Exception as e:
+        print('{0} not authenticated, error: {1}'.format(username, str(e)))
+        conn.unbind()
+        return False
+    conn.unbind()
+    return True
+
+def authorized_db(username: str, password: str) -> bool:
     """Return true if the user can be authenticated."""
     query = user_db.session.query(User)  # pylint: disable=no-member
     user = query.filter_by(name=username).scalar()
